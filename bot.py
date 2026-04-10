@@ -2,7 +2,6 @@ import os, logging, requests
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from data import SCHEMES, YOJANAS, JOBS, EXAMS, search_all, get_item_by_id
 
 load_dotenv()
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -10,20 +9,21 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 def ask_groq(system, user):
     if not GROQ_KEY: return "GROQ_API_KEY not set."
     try:
-        r = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-            json={"model": "llama-3.1-8b-instant", "messages": [{"role":"system","content":system},{"role":"user","content":user}], "max_tokens":600, "temperature":0.3}, timeout=30)
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+            json={"model":"llama-3.1-8b-instant","messages":[{"role":"system","content":system},{"role":"user","content":user}],"max_tokens":600},
+            timeout=30)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e: return f"AI unavailable: {e}"
+    except Exception as e:
+        logger.error(f"Groq error: {e}")
+        return f"AI error: {e}"
 
-def ai_explain(item, t):
-    return ask_groq("Helpful Indian government assistant. Simple Hinglish. Emojis. Max 300 words.",
-        f"Explain {t}: {item['name']}\nDesc: {item['description']}\nEligibility: {item.get('eligibility','')}\nBenefit: {item.get('benefit','')}\nApply: {item.get('how_to_apply','')}")
+from data import SCHEMES, YOJANAS, JOBS, EXAMS, search_all, get_item_by_id
 
 def main_menu_kb():
     return InlineKeyboardMarkup([
@@ -46,10 +46,9 @@ def fmt(item):
     return f"{item['name']}\n{item.get('hindi_name','')}\n\nKya hai:\n{item['description']}\n\nEligibility:\n{item.get('eligibility','N/A')}\n\nBenefit:\n{item.get('benefit','N/A')}\n\nDocuments:\n{docs}\n\nApply:\n{item.get('how_to_apply','N/A')}\n\nWebsite:\n{item.get('website','N/A')}"
 
 async def start(u, c):
-    name = u.effective_user.first_name or "Dost"
-    await u.message.reply_text(f"Namaste {name}! India Government Bot\n\nSchemes, Yojanas, Jobs, Exams - sab kuch yahan!\n\nType karo ya button dabao:", reply_markup=main_menu_kb())
+    await u.message.reply_text(f"Namaste {u.effective_user.first_name}! India Government Bot\nSchemes, Yojanas, Jobs, Exams sab yahan!", reply_markup=main_menu_kb())
 
-async def help_cmd(u, c): await u.message.reply_text("/start /schemes /jobs /exams /yojanas\nType: kisan, health, railway, loan, army, neet")
+async def help_cmd(u, c): await u.message.reply_text("/start /schemes /jobs /exams /yojanas\nType: kisan, health, railway, loan, army")
 async def schemes_cmd(u, c): await u.message.reply_text("Schemes:", reply_markup=list_kb(SCHEMES,"s"))
 async def jobs_cmd(u, c): await u.message.reply_text("Jobs:", reply_markup=list_kb(JOBS,"j"))
 async def exams_cmd(u, c): await u.message.reply_text("Exams:", reply_markup=list_kb(EXAMS,"e"))
@@ -60,15 +59,15 @@ async def handle_text(u, c):
     if q in ["scheme","schemes","yojana"]: await schemes_cmd(u,c); return
     if q in ["job","jobs","naukri"]: await jobs_cmd(u,c); return
     if q in ["exam","exams"]: await exams_cmd(u,c); return
-    if q in ["yojanas","yojana"]: await yojanas_cmd(u,c); return
+    if q in ["yojanas"]: await yojanas_cmd(u,c); return
     results = search_all(q)
     total = sum(len(v) for v in results.values())
     if total == 0:
-        await u.message.reply_text("Searching...")
-        reply = ask_groq("Expert Indian government schemes assistant. Hinglish. Emojis.", u.message.text)
+        await u.message.reply_text("Searching with AI...")
+        reply = ask_groq("Expert Indian government schemes. Hinglish. Emojis.", u.message.text)
         await u.message.reply_text(f"AI:\n\n{reply}", reply_markup=main_menu_kb()); return
-    msg = f"Results for '{q}' ({total}):\n\n"
     buttons = []
+    msg = f"Results for '{q}' ({total}):\n\n"
     for item in (results["schemes"]+results["yojanas"])[:3]:
         em = "🏛" if item in results["schemes"] else "🟠"
         msg += f"{em} {item['name']}\n"
@@ -90,17 +89,19 @@ async def btn(u, c):
     elif d == "cat_yojanas": await q.edit_message_text("Yojanas:", reply_markup=list_kb(YOJANAS,"y"))
     elif d == "cat_jobs": await q.edit_message_text("Jobs:", reply_markup=list_kb(JOBS,"j"))
     elif d == "cat_exams": await q.edit_message_text("Exams:", reply_markup=list_kb(EXAMS,"e"))
-    elif d == "cat_search": await q.edit_message_text("Type any keyword: kisan, health, railway, loan, army...")
-    elif d == "cat_ai": await q.edit_message_text("Type your question in Hindi or English!")
+    elif d == "cat_search": await q.edit_message_text("Type keyword: kisan, health, railway, loan, army...")
+    elif d == "cat_ai": await q.edit_message_text("Type your question!")
     elif d.startswith("detail_"):
         item = get_item_by_id(d.replace("detail_",""))
         if item: await q.edit_message_text(fmt(item), reply_markup=detail_kb(item['id']), disable_web_page_preview=True)
     elif d.startswith("ai_"):
         item = get_item_by_id(d.replace("ai_",""))
         if item:
-            await q.edit_message_text("AI samjha raha hai...")
-            exp = ai_explain(item, "scheme/job/exam")
-            await q.edit_message_text(f"AI:\n\n{exp}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Details", callback_data=f"detail_{item['id']}")],[InlineKeyboardButton("Menu", callback_data="main_menu")]]))
+            await q.edit_message_text("AI samjha raha hai... please wait 🤖")
+            exp = ask_groq("Helpful Indian government assistant. Simple Hinglish. Emojis. Max 300 words.",
+                f"Explain: {item['name']}\n{item['description']}\nEligibility: {item.get('eligibility','')}\nBenefit: {item.get('benefit','')}\nApply: {item.get('how_to_apply','')}")
+            await q.edit_message_text(f"🤖 AI:\n\n{exp}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Details", callback_data=f"detail_{item['id']}")],[InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]]))
 
 def main():
     if not BOT_TOKEN: raise ValueError("BOT_TOKEN not set!")
