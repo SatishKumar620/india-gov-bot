@@ -16,7 +16,7 @@ def ask_groq(system, user):
     if not GROQ_KEY: return "GROQ_API_KEY not set."
     try:
         r = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-            json={"model": "llama3-8b-8192", "messages": [{"role":"system","content":system},{"role":"user","content":user}], "max_tokens":600, "temperature":0.3}, timeout=30)
+            json={"model": "llama-3.1-8b-instant", "messages": [{"role":"system","content":system},{"role":"user","content":user}], "max_tokens":600, "temperature":0.3}, timeout=30)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
     except Exception as e: return f"AI unavailable: {e}"
